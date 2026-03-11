@@ -179,9 +179,12 @@ class nnUNetTrainerV2_fullGIL_mamba(nnUNetTrainer):
         :param target:
         :return:
         """
+        # Extract full-resolution output only (index 0 from deep supervision list)
         target = target[0]
         output = output[0]
-        return super().run_online_evaluation(output, target)
+        # Wrap back in list because super().run_online_evaluation expects
+        # target[0] to index into the deep supervision list
+        return super().run_online_evaluation(output, [target])
 
     def validate(self, do_mirroring: bool = True, use_sliding_window: bool = True,
                  step_size: float = 0.5, save_softmax: bool = True, use_gaussian: bool = True, overwrite: bool = True,
