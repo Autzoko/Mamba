@@ -109,8 +109,6 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
     :param square: if True then fp, tp and fn will be squared before summation
     :return:
     """
-    print(type(net_output),type(gt))
-    print(net_output.shape,gt.shape)
     if axes is None:
         axes = tuple(range(2, len(net_output.size())))
 
@@ -120,7 +118,6 @@ def get_tp_fp_fn_tn(net_output, gt, axes=None, mask=None, square=False):
     with torch.no_grad():
         if len(shp_x) != len(shp_y):
             gt = gt.view((shp_y[0], 1, *shp_y[1:]))
-        print(00000)
         if all([i == j for i, j in zip(net_output.shape, gt.shape)]):
             # if this is the case then gt is probably already a one hot encoding
             y_onehot = gt
