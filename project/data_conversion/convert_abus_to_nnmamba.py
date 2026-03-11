@@ -11,7 +11,7 @@ All 200 cases are placed in imagesTr/labelsTr (nnUNet convention);
 the actual train/val assignment is controlled via splits_final.pkl.
 
 Produces:
-    nnMamba_raw/Dataset001_ABUS/
+    nnMamba_raw/Task001_ABUS/
         imagesTr/   ABUS_XXX_0000.nii.gz  (200 files)
         labelsTr/   ABUS_XXX.nii.gz       (200 files)
         imagesTs/   (empty placeholder)
@@ -77,7 +77,7 @@ def main():
     args = parser.parse_args()
 
     abus_root = Path(args.abus_root)
-    task_dir = Path(args.output_base) / "Dataset001_ABUS"
+    task_dir = Path(args.output_base) / "Task001_ABUS"
     images_tr = task_dir / "imagesTr"
     labels_tr = task_dir / "labelsTr"
     images_ts = task_dir / "imagesTs"

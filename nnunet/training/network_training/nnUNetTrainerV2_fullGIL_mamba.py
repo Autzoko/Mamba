@@ -77,16 +77,12 @@ class nnUNetTrainerV2_fullGIL_mamba(nnUNetTrainer):
             self.setup_DA_params()
 
             ################# Here we wrap the loss for deep supervision ############
-            # we need to know the number of outputs of the network
-            net_numpool = len(self.net_num_pool_op_kernel_sizes)
+            # nnMambaSeg outputs 4 scales (full-res + 3 deep supervision heads)
+            num_ds_outputs = 4
 
             # we give each output a weight which decreases exponentially (division by 2) as the resolution decreases
             # this gives higher resolution outputs more weight in the loss
-            weights = np.array([1 / (2 ** i) for i in range(net_numpool)])
-
-            # we don't use the lowest 2 outputs. Normalize weights so that they sum to 1
-            mask = np.array([True] + [True if i < net_numpool - 1 else False for i in range(1, net_numpool)])
-            weights[~mask] = 0
+            weights = np.array([1 / (2 ** i) for i in range(num_ds_outputs)])
             weights = weights / weights.sum()
             self.ds_loss_weights = weights
             # now wrap the loss
@@ -339,8 +335,11 @@ class nnUNetTrainerV2_fullGIL_mamba(nnUNetTrainer):
         :return:
         """
 
-        self.deep_supervision_scales = [[1, 1, 1]] + list(list(i) for i in 1 / np.cumprod(
+        # nnMambaSeg outputs 4 scales (full-res + 3 deep supervision heads at 2x, 4x, 8x downsampled)
+        # Limit to 4 scales to match the network output
+        all_scales = [[1, 1, 1]] + list(list(i) for i in 1 / np.cumprod(
             np.vstack(self.net_num_pool_op_kernel_sizes), axis=0))[:-1]
+        self.deep_supervision_scales = all_scales[:4]
 
         if self.threeD:
             self.data_aug_params = default_3D_augmentation_params
