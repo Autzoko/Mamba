@@ -16,9 +16,9 @@ Usage:
 """
 
 import argparse
+import gc
 import os
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import nibabel as nib
 import numpy as np
@@ -67,15 +67,21 @@ def process_single_volume(args_tuple):
 
     try:
         img = nib.load(str(nii_path))
-        data = img.get_fdata().astype(np.float32)
+        data = img.get_fdata(dtype=np.float32)
 
         # Get original spacing from header
         header = img.header
         original_spacing = tuple(header.get_zooms()[:3])
 
+        # Free nibabel image to release memory-mapped data
+        del img
+
         # Resample to target spacing
         if not all(abs(o - t) < 0.01 for o, t in zip(original_spacing, target_spacing)):
-            data = resample_volume(data, original_spacing, target_spacing, order=1)
+            resampled = resample_volume(data, original_spacing, target_spacing, order=1)
+            del data
+            data = resampled
+            del resampled
 
         # Normalize intensity
         data = normalize_intensity(data)
@@ -86,7 +92,11 @@ def process_single_volume(args_tuple):
         out_path = Path(output_dir) / fname
         nib.save(out_img, str(out_path))
 
-        return fname, original_spacing, data.shape, "OK"
+        shape = data.shape
+        del data, out_img
+        gc.collect()
+
+        return fname, original_spacing, shape, "OK"
     except Exception as e:
         return fname, None, None, str(e)
 
@@ -99,7 +109,8 @@ def main():
                         help="Output directory for preprocessed volumes")
     parser.add_argument("--target_spacing", type=float, nargs=3, default=[1.0, 1.0, 1.0],
                         help="Target isotropic spacing (default: 1 1 1)")
-    parser.add_argument("--num_workers", type=int, default=8)
+    parser.add_argument("--num_workers", type=int, default=1,
+                        help="Number of workers (default: 1 to avoid OOM)")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -114,28 +125,31 @@ def main():
         if vol_dir.exists():
             volume_paths.extend(sorted(vol_dir.glob("case_*_0000.nii.gz")))
 
+    # Skip already processed volumes (resume support)
+    existing = set(f.name for f in output_dir.glob("case_*_0000.nii.gz"))
+    remaining = [p for p in volume_paths if p.name not in existing]
+
     print(f"Found {len(volume_paths)} Duying volumes")
+    if existing:
+        print(f"Skipping {len(existing)} already processed volumes")
+    print(f"Processing {len(remaining)} volumes")
     print(f"Target spacing: {target_spacing}")
     print(f"Output: {output_dir}")
 
-    # Process volumes in parallel
-    tasks = [(str(p), str(output_dir), target_spacing) for p in volume_paths]
-
-    completed = 0
+    # Process volumes sequentially to avoid OOM
     errors = []
-    with ProcessPoolExecutor(max_workers=args.num_workers) as executor:
-        futures = {executor.submit(process_single_volume, t): t for t in tasks}
-        for future in as_completed(futures):
-            fname, orig_sp, shape, status = future.result()
-            completed += 1
-            if status == "OK":
-                print(f"[{completed}/{len(tasks)}] {fname}: "
-                      f"spacing {orig_sp} -> {target_spacing}, shape {shape}")
-            else:
-                print(f"[{completed}/{len(tasks)}] {fname}: ERROR - {status}")
-                errors.append((fname, status))
+    for i, vpath in enumerate(remaining):
+        fname, orig_sp, shape, status = process_single_volume(
+            (str(vpath), str(output_dir), target_spacing))
+        if status == "OK":
+            print(f"[{i+1}/{len(remaining)}] {fname}: "
+                  f"spacing {orig_sp} -> {target_spacing}, shape {shape}")
+        else:
+            print(f"[{i+1}/{len(remaining)}] {fname}: ERROR - {status}")
+            errors.append((fname, status))
+        gc.collect()
 
-    print(f"\nDone. Processed {completed - len(errors)}/{len(tasks)} successfully.")
+    print(f"\nDone. Processed {len(remaining) - len(errors)}/{len(remaining)} successfully.")
     if errors:
         print(f"Errors ({len(errors)}):")
         for fname, err in errors:
