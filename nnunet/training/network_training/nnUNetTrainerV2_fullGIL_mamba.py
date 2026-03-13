@@ -157,6 +157,7 @@ class nnUNetTrainerV2_fullGIL_mamba(nnUNetTrainer):
         #                             net_nonlin, net_nonlin_kwargs, True, False, lambda x: x, InitWeights_He(1e-2),
         #                             self.net_num_pool_op_kernel_sizes, self.net_conv_kernel_sizes, False, True, True)
         self.network = nnMambaSeg(in_ch=self.num_input_channels, number_classes=self.num_classes)
+        self.network.conv_op = conv_op
         if torch.cuda.is_available():
             self.network.cuda()
         self.network.inference_apply_nonlin = softmax_helper

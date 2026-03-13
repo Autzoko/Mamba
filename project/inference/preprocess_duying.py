@@ -18,6 +18,7 @@ Usage:
 import argparse
 import gc
 import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import nibabel as nib
@@ -136,18 +137,33 @@ def main():
     print(f"Target spacing: {target_spacing}")
     print(f"Output: {output_dir}")
 
-    # Process volumes sequentially to avoid OOM
+    # Process volumes
+    tasks = [(str(p), str(output_dir), target_spacing) for p in remaining]
     errors = []
-    for i, vpath in enumerate(remaining):
-        fname, orig_sp, shape, status = process_single_volume(
-            (str(vpath), str(output_dir), target_spacing))
-        if status == "OK":
-            print(f"[{i+1}/{len(remaining)}] {fname}: "
-                  f"spacing {orig_sp} -> {target_spacing}, shape {shape}")
-        else:
-            print(f"[{i+1}/{len(remaining)}] {fname}: ERROR - {status}")
-            errors.append((fname, status))
-        gc.collect()
+    completed = 0
+
+    if args.num_workers > 1:
+        with ProcessPoolExecutor(max_workers=args.num_workers) as executor:
+            futures = {executor.submit(process_single_volume, t): t for t in tasks}
+            for future in as_completed(futures):
+                fname, orig_sp, shape, status = future.result()
+                completed += 1
+                if status == "OK":
+                    print(f"[{completed}/{len(remaining)}] {fname}: "
+                          f"spacing {orig_sp} -> {target_spacing}, shape {shape}")
+                else:
+                    print(f"[{completed}/{len(remaining)}] {fname}: ERROR - {status}")
+                    errors.append((fname, status))
+    else:
+        for i, t in enumerate(tasks):
+            fname, orig_sp, shape, status = process_single_volume(t)
+            if status == "OK":
+                print(f"[{i+1}/{len(remaining)}] {fname}: "
+                      f"spacing {orig_sp} -> {target_spacing}, shape {shape}")
+            else:
+                print(f"[{i+1}/{len(remaining)}] {fname}: ERROR - {status}")
+                errors.append((fname, status))
+            gc.collect()
 
     print(f"\nDone. Processed {len(remaining) - len(errors)}/{len(remaining)} successfully.")
     if errors:
