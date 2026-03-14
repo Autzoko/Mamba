@@ -138,6 +138,8 @@ def main():
                         help="Output directory for results")
     parser.add_argument("--min_component_volume", type=int, default=10,
                         help="Min voxels for a connected component to be considered")
+    parser.add_argument("--largest_only", action="store_true",
+                        help="Keep only the largest connected component per case")
     args = parser.parse_args()
 
     pred_dir = Path(args.pred_dir)
@@ -158,8 +160,9 @@ def main():
     unmatched_gt = 0
     cases_without_gt = 0
 
-    for pred_path in pred_files:
+    for pi, pred_path in enumerate(pred_files):
         case_name = pred_path.name.replace(".nii.gz", "")
+        print(f"[{pi+1}/{len(pred_files)}] {case_name}...", flush=True)
 
         # Load prediction mask
         pred_img = nib.load(str(pred_path))
@@ -167,6 +170,10 @@ def main():
 
         # Extract predicted bboxes
         pred_bboxes = extract_bboxes_from_mask(pred_mask, args.min_component_volume)
+
+        # Optionally keep only the largest component
+        if args.largest_only and len(pred_bboxes) > 1:
+            pred_bboxes = [max(pred_bboxes, key=lambda b: b["volume"])]
 
         # Get GT bboxes for this case
         if case_name not in gt_bboxes:
@@ -289,6 +296,93 @@ def main():
     print(f"\nResults saved to: {output_dir}")
     print(f"  per_lesion_results.csv")
     print(f"  summary.json")
+
+    # Generate visualization
+    print("\nGenerating plots...")
+    generate_plots(df, output_dir)
+    print(f"  Plots saved to {output_dir}")
+
+
+def generate_plots(df, output_dir):
+    """Generate evaluation visualization plots."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+
+    # 1. IoU histogram
+    ax = axes[0, 0]
+    ax.hist(df["iou"], bins=50, edgecolor="black", alpha=0.7, color="steelblue")
+    ax.set_xlabel("3D IoU")
+    ax.set_ylabel("Count")
+    ax.set_title(f"IoU Distribution (mean={df['iou'].mean():.3f})")
+    ax.axvline(df["iou"].mean(), color="red", linestyle="--", label=f"mean={df['iou'].mean():.3f}")
+    ax.axvline(df["iou"].median(), color="orange", linestyle="--", label=f"median={df['iou'].median():.3f}")
+    ax.legend()
+
+    # 2. Recall histogram
+    ax = axes[0, 1]
+    ax.hist(df["recall"], bins=50, edgecolor="black", alpha=0.7, color="seagreen")
+    ax.set_xlabel("Recall (GT coverage)")
+    ax.set_ylabel("Count")
+    ax.set_title(f"Recall Distribution (mean={df['recall'].mean():.3f})")
+
+    # 3. Precision histogram
+    ax = axes[0, 2]
+    ax.hist(df["precision"], bins=50, edgecolor="black", alpha=0.7, color="coral")
+    ax.set_xlabel("Precision")
+    ax.set_ylabel("Count")
+    ax.set_title(f"Precision Distribution (mean={df['precision'].mean():.3f})")
+
+    # 4. IoU vs GT volume (scatter)
+    ax = axes[1, 0]
+    ax.scatter(df["gt_volume"], df["iou"], alpha=0.4, s=15, c="steelblue")
+    ax.set_xlabel("GT Lesion Volume (voxels)")
+    ax.set_ylabel("3D IoU")
+    ax.set_title("IoU vs GT Lesion Size")
+    ax.set_xscale("log")
+
+    # 5. Detection rate at different IoU thresholds
+    ax = axes[1, 1]
+    thresholds = np.arange(0, 1.01, 0.05)
+    rates = [(df["iou"] > t).mean() for t in thresholds]
+    ax.plot(thresholds, rates, "o-", color="steelblue", markersize=4)
+    ax.set_xlabel("IoU Threshold")
+    ax.set_ylabel("Detection Rate")
+    ax.set_title("Detection Rate vs IoU Threshold")
+    ax.grid(True, alpha=0.3)
+    for t in [0.1, 0.3, 0.5]:
+        r = (df["iou"] > t).mean()
+        ax.axvline(t, color="gray", linestyle=":", alpha=0.5)
+        ax.annotate(f"{r:.2f}", (t, r), textcoords="offset points",
+                    xytext=(5, 5), fontsize=8)
+
+    # 6. Number of predicted components per case
+    ax = axes[1, 2]
+    n_comps = df.groupby("case_id")["num_pred_components"].first()
+    ax.hist(n_comps, bins=50, edgecolor="black", alpha=0.7, color="mediumpurple")
+    ax.set_xlabel("# Predicted Components")
+    ax.set_ylabel("# Cases")
+    ax.set_title(f"Pred Components/Case (median={int(n_comps.median())})")
+
+    plt.suptitle("Cross-Domain Evaluation: nnMamba (ABUS) -> Duying", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(output_dir / "evaluation_plots.png", dpi=150, bbox_inches="tight")
+    plt.close()
+
+    # Also save a per-case summary plot (sorted by mean IoU)
+    case_iou = df.groupby("case_id")["iou"].mean().sort_values()
+    fig, ax = plt.subplots(figsize=(14, 6))
+    ax.bar(range(len(case_iou)), case_iou.values, color="steelblue", alpha=0.7)
+    ax.set_xlabel("Cases (sorted by mean IoU)")
+    ax.set_ylabel("Mean IoU")
+    ax.set_title(f"Per-Case Mean IoU ({len(case_iou)} cases)")
+    ax.axhline(case_iou.mean(), color="red", linestyle="--", label=f"overall mean={case_iou.mean():.3f}")
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(output_dir / "per_case_iou.png", dpi=150, bbox_inches="tight")
+    plt.close()
 
 
 if __name__ == "__main__":
